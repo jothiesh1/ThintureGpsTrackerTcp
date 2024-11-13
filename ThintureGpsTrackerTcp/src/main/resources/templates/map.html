@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Live GPS Tracking</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <style>
+        #map { height: 100vh; }
+        .car-icon {
+            width: 50px;
+            height: 50px;
+        }
+        .ring-blink {
+            position: relative;
+            animation: ringBlink 1.5s infinite;
+            border-color: red;
+        }
+        .ring-blink::before, .ring-blink::after {
+            content: '';
+            position: absolute;
+            border-radius: 50%;
+            opacity: 0.1;
+            animation: ringBlink 1.5s infinite;
+            border: 5px solid;
+        }
+        .ring-blink::before {
+            top: -10px;
+            left: -10px;
+            width: 70px;
+            height: 70px;
+            animation-delay: 0s;
+        }
+        .ring-blink::after {
+            top: -20px;
+            left: -20px;
+            width: 90px;
+            height: 90px;
+            animation-delay: 0.3s;
+        }
+        @keyframes ringBlink {
+            0% { transform: scale(0.3); opacity: 0.3; }
+            50% { transform: scale(0.5); opacity: 0.5; }
+            100% { transform: scale(1); opacity: 0; }
+        }
+        .ring-blink-red::before, .ring-blink-red::after {
+            border-color: red;
+        }
+        .ring-blink-green::before, .ring-blink-green::after {
+            border-color: green;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script>
+        // Initialize the map
+        let map = L.map('map').setView([13.006875, 77.503186], 5);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 16,
+        }).addTo(map);
+
+        let markers = {};  // Store markers for each device by IMEI number
+
+        // Define a custom car icon with blinking effect based on device status
+        function getCarIcon(status) {
+            let ringClass = status === 'N2' ? 'ring-blink ring-blink-red' : 'ring-blink ring-blink-green';
+            return L.divIcon({
+                className: `car-icon ${ringClass}`,
+                html: `<img src="/THINTURE_IMAGE/red2.png" class="car-icon" />`,
+                iconSize: [50, 50],
+                iconAnchor: [25, 25]
+            });
+        }
+
+        // Connect to WebSocket server
+        let socket = new WebSocket("ws://3.109.116.92:8181/gps-data");
+
+        // Handle incoming GPS data from WebSocket
+        socket.onmessage = function(event) {
+            let data = JSON.parse(event.data);
+            let imei = data.deviceID;  // Using IMEI as the unique identifier
+            let lat = data.latitude;
+            let lon = data.longitude;
+            let status = data.status || 'N1';  // Default to 'N1' if no status is provided
+
+            // Check if a marker exists for this IMEI, if not, create a new one
+            if (!markers[imei]) {
+                markers[imei] = L.marker([lat, lon], { icon: getCarIcon(status) }).addTo(map)
+                    .bindPopup(`<b>Device ID:</b> ${imei}`);
+            } else {
+                // Update the marker's position and icon with new status
+                markers[imei].setLatLng([lat, lon])
+                    .setIcon(getCarIcon(status));
+            }
+        };
+
+        // Error handling for WebSocket
+        socket.onerror = function(error) {
+            console.error("WebSocket error:", error);
+        };
+    </script>
+</body>
+</html>
