@@ -7,9 +7,13 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CopyOnWriteArraySet;
 
@@ -32,55 +36,58 @@ import java.util.Set;
 public class GPSWebSocketHandler extends TextWebSocketHandler {
 
     private static final Logger logger = LoggerFactory.getLogger(GPSWebSocketHandler.class);
-    private final Set<WebSocketSession> sessions = new CopyOnWriteArraySet<>();
+    private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
-        sessions.add(session);
-        logger.info("\u001B[32mNew WebSocket connection established with session ID: {}\u001B[0m", session.getId());
+        sessions.put(session.getId(), session);
+        logger.info("New WebSocket connection established with session ID: {}", session.getId());
     }
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
-        sessions.remove(session);
-        logger.info("\u001B[31mWebSocket connection closed with session ID: {}, Status: {}\u001B[0m", session.getId(), status);
+        sessions.remove(session.getId());
+        logger.info("WebSocket connection closed with session ID: {}, Status: {}", session.getId(), status);
     }
 
-    /**
-     * Broadcasts location data with latitude, longitude, timestamp, and speed.
-     *
-     * @param deviceID  Unique identifier for the device
-     * @param latitude  Latitude of the device
-     * @param longitude Longitude of the device
-     * @param timestamp Timestamp of the location data
-     * @param speed     Speed of the device in km/h
-     */
-    public void broadcastLocationWithIgnition(String deviceID, double latitude, double longitude, long timestamp, int speed, boolean isIgnitionOn) {
+    public void broadcastLocationWithIgnition(String deviceID, double latitude, double longitude, long timestamp, int speed, boolean isIgnitionOn, String ignitionState) {
         JSONObject locationData = new JSONObject();
         locationData.put("deviceID", deviceID);
         locationData.put("latitude", latitude);
         locationData.put("longitude", longitude);
         locationData.put("timestamp", timestamp);
         locationData.put("speed", speed);
-        locationData.put("ignition", isIgnitionOn); // Add ignition status
+        locationData.put("ignition", isIgnitionOn);
+        locationData.put("ignitionState", ignitionState);
 
         TextMessage locationMessage = new TextMessage(locationData.toString());
-        logger.debug("\u001B[36mBroadcasting location with ignition status for device {}: {}\u001B[0m", deviceID, locationData);
 
-        sessions.forEach(session -> {
+        sessions.values().parallelStream().forEach(session -> {
             if (session.isOpen()) {
                 try {
                     session.sendMessage(locationMessage);
-                    logger.info("\u001B[32mSent location with ignition status to session ID: {}\u001B[0m", session.getId());
+                    logger.debug("Sent location with ignition statuses to session ID: {}", session.getId());
                 } catch (IOException e) {
-                    logger.error("\u001B[31mError sending WebSocket message to session ID: {}\u001B[0m", session.getId(), e);
+                    closeSessionGracefully(session);
                 }
             } else {
-                sessions.remove(session);
-                logger.warn("\u001B[33mRemoved closed session ID: {}\u001B[0m", session.getId());
+                sessions.remove(session.getId());
             }
         });
     }
+
+    private void closeSessionGracefully(WebSocketSession session) {
+        try {
+            session.close();
+            sessions.remove(session.getId());
+            logger.info("Closed WebSocket session ID gracefully: {}", session.getId());
+        } catch (IOException e) {
+            logger.error("Failed to close WebSocket session ID: {}", session.getId(), e);
+        }
+    }
+
+
+
 
     /**
      * Broadcasts only the basic location data.
@@ -96,20 +103,26 @@ public class GPSWebSocketHandler extends TextWebSocketHandler {
         locationData.put("longitude", longitude);
 
         TextMessage locationMessage = new TextMessage(locationData.toString());
-        logger.debug("\u001B[34mBroadcasting location for device {}: {}\u001B[0m", deviceID, locationData);
+        logger.debug("Broadcasting location for device {}: {}", deviceID, locationData);
 
-        sessions.forEach(session -> {
-            if (session.isOpen()) { // Only attempt to send if the session is open
-                try {
-                    session.sendMessage(locationMessage);
-                    logger.info("\u001B[32mSent location to session ID: {}\u001B[0m", session.getId());
-                } catch (IOException e) {
-                    logger.error("\u001B[31mError sending WebSocket message to session ID: {}\u001B[0m", session.getId(), e);
-                }
-            } else {
-                sessions.remove(session); // Remove closed session
-                logger.warn("\u001B[33mRemoved closed session ID: {}\u001B[0m", session.getId());
+        // Iterate over the map entries safely
+        sessions.entrySet().removeIf(entry -> {
+            WebSocketSession session = entry.getValue();
+            if (!session.isOpen()) {
+                logger.warn("Session is closed. Removing session ID: {}", session.getId());
+                return true; // Remove closed session
+            }
+
+            try {
+                session.sendMessage(locationMessage);
+                logger.info("Sent location to session ID: {}", session.getId());
+                return false; // Keep session
+            } catch (IOException e) {
+                logger.error("Error sending WebSocket message to session ID: {}", session.getId(), e);
+                return true; // Remove session on error
             }
         });
     }
+
+
 }

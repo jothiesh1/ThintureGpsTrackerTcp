@@ -3,7 +3,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import com.ThintureGpsTrackerTcp.model.DeviceHistory;
+import com.ThintureGpsTrackerTcp.repository.DeviceHistoryRepository;
 import com.ThintureGpsTrackerTcp.util.PacketParser;
+
+import io.reactivex.rxjava3.core.BackpressureStrategy;
+import io.reactivex.rxjava3.core.Flowable;
+import io.reactivex.rxjava3.core.Observable;
+import io.reactivex.rxjava3.schedulers.Schedulers;
 
 import java.io.DataInputStream;
 import java.io.IOException;
@@ -15,6 +22,7 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -45,17 +53,26 @@ public class TcpServerService implements Runnable {
     private static final Logger logger = LoggerFactory.getLogger(TcpServerService.class);
 
     @Autowired
-    private PacketParser packetParser; // Parses GPS data packets and handles broadcasting
+    private PacketParser packetParser;
+
+    //inject for save or storing data
+    @Autowired
+    public TcpServerService(PacketParser packetParser) {
+        this.packetParser = packetParser;
+    }
+    
+    
+    @Autowired
+    private DeviceHistoryRepository deviceHistoryRepository;
 
     @Value("${tcp.server.port:5000}")
-    private int tcpPort; // Configurable TCP port for the server (default: 5000)
+    private int tcpPort;
 
-    /**
-     * Starts the TCP server automatically when the application is ready.
-     */
+    private volatile boolean running = true;
+
     @EventListener(ApplicationReadyEvent.class)
     public void startServer() {
-        new Thread(this).start(); // Runs the server in a separate thread
+        new Thread(this).start();
     }
 
     @Override
@@ -63,18 +80,31 @@ public class TcpServerService implements Runnable {
         try (ServerSocket serverSocket = new ServerSocket(tcpPort)) {
             logger.info("TCP Server started on port {}", tcpPort);
 
-            // Continuously listen for client connections
-            while (true) {
+            // Set up a shutdown hook for graceful shutdown
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 try {
-                    Socket clientSocket = serverSocket.accept(); // Accepts a new client
-                    logger.info("New client connected from {}", clientSocket.getInetAddress());
-                    new Thread(() -> handleClientConnection(clientSocket)).start(); // Handle each client in a separate thread
-                } catch (Exception e) {
-                    logger.error("Error accepting client connection", e);
+                    running = false;
+                    serverSocket.close();
+                    logger.info("Server socket closed gracefully.");
+                } catch (IOException e) {
+                    logger.error("Error during server socket shutdown", e);
+                }
+            }));
+
+            // Main server loop
+            while (running && !serverSocket.isClosed()) {
+                try {
+                    Socket clientSocket = serverSocket.accept(); // Accept incoming connection
+                    // Handle each client in a new thread (or thread pool)
+                    new Thread(() -> handleClientConnection(clientSocket)).start();
+                } catch (IOException e) {
+                    if (!serverSocket.isClosed()) {
+                        logger.error("Error accepting client connection", e);
+                    }
                 }
             }
         } catch (IOException e) {
-            logger.error("Failed to start TCP server", e);
+            logger.error("Failed to start TCP server on port {}", tcpPort, e);
         }
     }
 
@@ -115,7 +145,6 @@ public class TcpServerService implements Runnable {
                             timestampSeconds = packetParser.convertHexToTimestamp(hexData);
                             String formattedTimestamp = packetParser.formatTimestamp(timestampSeconds);
                             logger.info("\u001B[32mDevice {} - Parsed and formatted Timestamp: {}\u001B[0m", deviceID, formattedTimestamp);
-
                         } catch (IllegalArgumentException e) {
                             logger.error("Device {} - Timestamp parsing error: {}", deviceID, e.getMessage());
                         }
@@ -123,7 +152,7 @@ public class TcpServerService implements Runnable {
                         logger.warn("Device {} - Timestamp not found in packet.", deviceID);
                     }
 
-                 // Extract latitude and longitude
+                    // Extract latitude and longitude
                     byte[] latitudeBytes = extractBytes(buffer, 0x02, 0x03); // Assumes lat starts at 0x02
                     byte[] longitudeBytes = extractLongitudeAfterLatitude(buffer);
 
@@ -131,8 +160,16 @@ public class TcpServerService implements Runnable {
                         String latitudeHex = bytesToHex(latitudeBytes);
                         String longitudeHex = bytesToHex(longitudeBytes);
 
-logger.info("\u001B[34mDevice {} - Extracted Latitude Hex: {}\u001B[0m", deviceID, latitudeHex);
-logger.info("\u001B[34mDevice {} - Extracted Longitude Hex: {}\u001B[0m", deviceID, longitudeHex);
+                        logger.info("\u001B[34mDevice {} - Extracted Latitude Hex: {}\u001B[0m", deviceID, latitudeHex);
+                        logger.info("\u001B[34mDevice {} - Extracted Longitude Hex: {}\u001B[0m", deviceID, longitudeHex);
+
+                        // Save data to the database
+                        try {
+                            packetParser.extractAndSaveParameters(deviceID, latitudeHex, longitudeHex, buffer);
+                            logger.info("\u001B[32mDevice {} - Data successfully saved to the database.\u001B[0m", deviceID);
+                        } catch (Exception e) {
+                            logger.error("\u001B[31mDevice {} - Error saving data to the database: {}\u001B[0m", deviceID, e.getMessage(), e);
+                        }
 
                         // Parse and broadcast the data
                         packetParser.extractAndBroadcastParameters(deviceID, latitudeHex, longitudeHex, buffer);
@@ -145,27 +182,35 @@ logger.info("\u001B[34mDevice {} - Extracted Longitude Hex: {}\u001B[0m", device
                         }
                     }
 
-
                     // Extract and log speed data
                     List<Integer> speeds = packetParser.extractAndLogSpeeds(buffer, deviceID);
                     if (!speeds.isEmpty()) {
-                    //	logger.info("\u001B[36mDevice {} - Processed Speed(s): {}\u001B[0m", deviceID, speeds);
-
+                        logger.info("\u001B[36mDevice {} - Processed Speed(s): {}\u001B[0m", deviceID, speeds);
                     } else {
                         logger.warn("Device {} - No valid speed data found in the packet.", deviceID);
                     }
-
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
                     // Extract and decode the System Flag (0x1C)
                     Map<String, Boolean> systemFlags = packetParser.extractAndLogSystemFlags(buffer, deviceID);
 
                     // Check ignition status
                     boolean isIgnitionOn = systemFlags.getOrDefault("ACC Status (ON/OFF)", false);
-                    logger.info("\u001B[1;36mDevice {}\u001B[0m - Ignition (ACC) Status: {}.",
-                            deviceID,
-                            isIgnitionOn ? "\u001B[1;32mON\u001B[0m" : "\u001B[1;31mOFF\u001B[0m");
+                    //    logger.info("\u001B[1;36mDevice {}\u001B[0m - Ignition (ACC) Status: {}.",
+                    //         deviceID,
+                    //     isIgnitionOn ? "\u001B[1;32mON\u001B[0m" : "\u001B[1;31mOFF\u001B[0m");
 
                 } else {
-                    logger.warn("\u001B[33mDevice {} - Invalid GPS data format from client: {}\u001B[0m", deviceID, clientSocket.getInetAddress());
+                	//  logger.warn("\u001B[33mDevice {} - Invalid GPS data format from client: {}\u001B[0m", deviceID, clientSocket.getInetAddress());
                 }
             
              // Extract Mileage and Run Time
@@ -177,9 +222,9 @@ logger.info("\u001B[34mDevice {} - Extracted Longitude Hex: {}\u001B[0m", device
 
                 // Log Mileage
                 if (mileageMeters != null && mileageKilometers != null) {
-                    logger.info("Device {} - Mileage: {} meters ({} kilometers)", deviceID, mileageMeters, mileageKilometers);
+                	//    logger.info("Device {} - Mileage: {} meters ({} kilometers)", deviceID, mileageMeters, mileageKilometers);
                 } else {
-                    logger.warn("Device {} - Mileage not found in the packet.", deviceID);
+                	//   logger.warn("Device {} - Mileage not found in the packet.", deviceID);
                 }
 
                 // Extract Run Time
@@ -188,10 +233,10 @@ logger.info("\u001B[34mDevice {} - Extracted Longitude Hex: {}\u001B[0m", device
 
                 // Log Run Time
                 if (runTimeSeconds != null && runTimeFormattedTime != null) {
-                    logger.info("Device {} - Run Time: {} seconds", deviceID, runTimeSeconds);
-                    logger.info("Device {} - Run Time formatted as time: {}", deviceID, runTimeFormattedTime);
+                	//    logger.info("Device {} - Run Time: {} seconds", deviceID, runTimeSeconds);
+                	//   logger.info("Device {} - Run Time formatted as time: {}", deviceID, runTimeFormattedTime);
                 } else {
-                    logger.warn("Device {} - Run Time not found in the packet.", deviceID);
+                	//   logger.warn("Device {} - Run Time not found in the packet.", deviceID);
                 }
 
                 
@@ -200,9 +245,9 @@ logger.info("\u001B[34mDevice {} - Extracted Longitude Hex: {}\u001B[0m", device
                 Double altitude = packetParser.extractAltitude(buffer, deviceID);
 
                 if (altitude != null) {
-                    logger.info("Device {} - Altitude: {} meters", deviceID, altitude);
+                	//    logger.info("Device {} - Altitude: {} meters", deviceID, altitude);
                 } else {
-                    logger.warn("Device {} - Altitude data not found or validation failed.", deviceID);
+                	//   logger.warn("Device {} - Altitude data not found or validation failed.", deviceID);
                 }
              // Extract AD1, AD4, AD5 parameters
            
@@ -213,21 +258,21 @@ logger.info("\u001B[34mDevice {} - Extracted Longitude Hex: {}\u001B[0m", device
                 String ad5 = analogParams.get("AD5");
 
                 if (ad1 != null) {
-                    logger.info("\u001B[34mDevice {} - AD1 Voltage: {}\u001B[0m", deviceID, ad1);
+                	//   logger.info("\u001B[34mDevice {} - AD1 Voltage: {}\u001B[0m", deviceID, ad1);
                 } else {
                     logger.warn("Device {} - AD1 not found in the packet.", deviceID);
                 }
 
                 if (ad4 != null) {
-                    logger.info("\u001B[32mDevice {} - AD4 Voltage and Battery: {}\u001B[0m", deviceID, ad4);
+                	//   logger.info("\u001B[32mDevice {} - AD4 Voltage and Battery: {}\u001B[0m", deviceID, ad4);
                 } else {
-                    logger.warn("Device {} - AD4 not found in the packet.", deviceID);
+                	//  logger.warn("Device {} - AD4 not found in the packet.", deviceID);
                 }
 
                 if (ad5 != null) {
-                    logger.info("\u001B[36mDevice {} - AD5 Voltage: {}\u001B[0m", deviceID, ad5);
+                	//   logger.info("\u001B[36mDevice {} - AD5 Voltage: {}\u001B[0m", deviceID, ad5);
                 } else {
-                    logger.warn("Device {} - AD5 not found in the packet.", deviceID);
+                	//  logger.warn("Device {} - AD5 not found in the packet.", deviceID);
                 }
                 
                 
@@ -239,15 +284,15 @@ logger.info("\u001B[34mDevice {} - Extracted Longitude Hex: {}\u001B[0m", device
                 Double hdop = (Double) drivingParams.get("HDOP");
 
                 if (drivingDirection != null) {
-                    logger.info("\u001B[35mDevice {} - Driving Direction: {} degrees\u001B[0m", deviceID, drivingDirection);
+                	//   logger.info("\u001B[35mDevice {} - Driving Direction: {} degrees\u001B[0m", deviceID, drivingDirection);
                 } else {
-                    logger.warn("Device {} - Driving Direction not found in the packet.", deviceID);
+                	//  logger.warn("Device {} - Driving Direction not found in the packet.", deviceID);
                 }
 
                 if (hdop != null) {
-                    logger.info("\u001B[33mDevice {} - HDOP: {:.1f}\u001B[0m", deviceID, hdop);
+                	//    logger.info("\u001B[33mDevice {} - HDOP: {:.1f}\u001B[0m", deviceID, hdop);
                 } else {
-                    logger.warn("Device {} - HDOP not found in the packet.", deviceID);
+                	//  logger.warn("Device {} - HDOP not found in the packet.", deviceID);
                 }
 
                 
@@ -257,49 +302,65 @@ logger.info("\u001B[34mDevice {} - Extracted Longitude Hex: {}\u001B[0m", device
                 // Log GPS Positioning Status
                 String gpsPositioningStatus = (String) gpsParams.get("GPSPositioningStatus");
                 if (gpsPositioningStatus != null) {
-                    logger.info("\u001B[34mDevice {} - GPS Positioning Status: {}\u001B[0m", deviceID, gpsPositioningStatus);
+                	//  logger.info("\u001B[34mDevice {} - GPS Positioning Status: {}\u001B[0m", deviceID, gpsPositioningStatus);
                 } else {
-                    logger.warn("Device {} - GPS Positioning Status not found in the packet.", deviceID);
+                	//  logger.warn("Device {} - GPS Positioning Status not found in the packet.", deviceID);
                 }
 
                 // Log Number of Satellites
                 Integer numberOfSatellites = (Integer) gpsParams.get("NumberOfSatellites");
                 if (numberOfSatellites != null) {
-                    logger.info("\u001B[36mDevice {} - Number of Satellites: {}\u001B[0m", deviceID, numberOfSatellites);
+                	//  logger.info("\u001B[36mDevice {} - Number of Satellites: {}\u001B[0m", deviceID, numberOfSatellites);
                 } else {
-                    logger.warn("Device {} - Number of Satellites not found in the packet.", deviceID);
+                	//  logger.warn("Device {} - Number of Satellites not found in the packet.", deviceID);
                 }
 
                 // Log GSM Signal Strength
                 Integer gsmSignalStrength = (Integer) gpsParams.get("GSMSignalStrength");
                 if (gsmSignalStrength != null) {
-                    logger.info("\u001B[32mDevice {} - GSM Signal Strength: {}\u001B[0m", deviceID, gsmSignalStrength);
+                	// logger.info("\u001B[32mDevice {} - GSM Signal Strength: {}\u001B[0m", deviceID, gsmSignalStrength);
                 } else {
-                    logger.warn("Device {} - GSM Signal Strength not found in the packet.", deviceID);
+                	//   logger.warn("Device {} - GSM Signal Strength not found in the packet.", deviceID);
                 }
 
                 // Log Output Port Status
                 String outputPortStatus = (String) gpsParams.get("OutputPortStatus");
                 if (outputPortStatus != null) {
-                    logger.info("\u001B[33mDevice {} - Output Port Status: {}\u001B[0m", deviceID, outputPortStatus);
+                	// logger.info("\u001B[33mDevice {} - Output Port Status: {}\u001B[0m", deviceID, outputPortStatus);
                 } else {
-                    logger.warn("Device {} - Output Port Status not found in the packet.", deviceID);
+                	//  logger.warn("Device {} - Output Port Status not found in the packet.", deviceID);
                 }
 
                 // Log Input Port Status
                 String inputPortStatus = (String) gpsParams.get("InputPortStatus");
                 if (inputPortStatus != null) {
-                    logger.info("\u001B[35mDevice {} - Input Port Status: {}\u001B[0m", deviceID, inputPortStatus);
+                	//   logger.info("\u001B[35mDevice {} - Input Port Status: {}\u001B[0m", deviceID, inputPortStatus);
                 } else {
-                    logger.warn("Device {} - Input Port Status not found in the packet.", deviceID);
+                	//  logger.warn("Device {} - Input Port Status not found in the packet.", deviceID);
                 }
 
                 // Log Geo-Fence Number
                 Integer geoFenceNumber = (Integer) gpsParams.get("GeoFenceNumber");
                 if (geoFenceNumber != null) {
-                    logger.info("\u001B[31mDevice {} - Geo-Fence Number: {}\u001B[0m", deviceID, geoFenceNumber);
+                	//     logger.info("\u001B[31mDevice {} - Geo-Fence Number: {}\u001B[0m", deviceID, geoFenceNumber);
                 } else {
-                    logger.warn("Device {} - Geo-Fence Number not found in the packet.", deviceID);
+                	//    logger.warn("Device {} - Geo-Fence Number not found in the packet.", deviceID);
+                }
+             
+             // Extract and process the ignition state
+                String ignitionState = packetParser.processStateChange(buffer, deviceID);
+
+                if (ignitionState != null) {
+                    logger.info("Device {} - Processed ignition state: {}", deviceID, ignitionState);
+
+                    // Handle actions based on the ignition state
+                    if ("ON".equals(ignitionState)) {
+                        logger.debug("Device {} - Ignition is ON. Taking appropriate actions.", deviceID);
+                        // Add logic for ON state
+                    } else if ("OFF".equals(ignitionState)) {
+                        logger.debug("Device {} - Ignition is OFF. Taking appropriate actions.", deviceID);
+                        // Add logic for OFF state
+                    }
                 }
 
                 
@@ -434,4 +495,35 @@ logger.info("\u001B[34mDevice {} - Extracted Longitude Hex: {}\u001B[0m", device
 
         return byteArray;
     }
+    
+
+    public static double convertHexToDegrees(String hexData) {
+		String[] hexValues = hexData.trim().split("\\s+");
+		if (hexValues.length != 3 && hexValues.length != 4) {
+			throw new IllegalArgumentException("Incorrect number of hex values for conversion.");
+		}
+
+		long decimalValue = 0;
+		for (int i = hexValues.length - 1; i >= 0; i--) {
+			String hex = hexValues[i].startsWith("0x") ? hexValues[i].substring(2) : hexValues[i];
+			decimalValue = (decimalValue << 8) | Integer.parseInt(hex, 16);
+		}
+
+		if (hexValues.length == 3 && decimalValue >= 0x800000L) {
+			decimalValue -= 0x1000000L;
+		}
+
+		double degrees = decimalValue / 1_000_000.0;
+		logger.debug("\u001B[34mConverted hex {} to degrees: {}\u001B[0m", hexData, degrees);
+
+		return degrees;
+	}
+
+	
+    
+
+    
+    
+    
+       
 }

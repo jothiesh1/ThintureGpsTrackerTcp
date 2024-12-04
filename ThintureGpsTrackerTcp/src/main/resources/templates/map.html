@@ -6,222 +6,154 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
     <style>
         #map { height: 90vh; }
-        #controls { margin: 10px; }
+        .custom-small-popup {
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 5px;
+            border-radius: 16px;
+            width: 250px;
+            overflow: hidden;
+        }
+        .custom-large-popup {
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            background: rgba(0, 0, 0, 0.95);
+            color: white;
+            padding: 6px;
+            border-radius: 12px;
+            width: 300px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .custom-large-popup table td:first-child {
+            font-weight: bold;
+            color: #ffcc00;
+        }
+        .leaflet-popup-close-button {
+            color: red;
+            font-size: 18px;
+        }
+        .leaflet-popup-close-button:hover {
+            color: yellow;
+        }
     </style>
 </head>
 <body>
-    <div id="controls">
-        <label for="vehicleType">Select Vehicle Type:</label>
-        <select id="vehicleType">
-            <option value="default">Default</option>
-            <option value="bike">Bike</option>
-            <option value="car">Car</option>
-            <option value="truck">Truck</option>
-        </select>
-    </div>
     <div id="map"></div>
-    
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
-	<script>
-		// Initialize the map
-		let map = L.map('map').setView([13.006875, 77.503186], 12);
-		L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-		    maxZoom: 16
-		}).addTo(map);
+    <script>
+        let map = L.map('map').setView([13.006875, 77.503186], 12);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 16
+        }).addTo(map);
 
-		let markers = {}; // Store markers for each device by IMEI number
-		let deviceDataCache = {}; // Cache for storing the last known data for each device
-		let addressCache = {}; // Cache for storing addresses by coordinates
+        let markers = {};
+        let deviceDataCache = {};
+        let addressCache = {};
 
-		// Define color-coded icons for different vehicle types
-		const icons = {
-		    bike: L.icon({
-		        iconUrl: '/THINTURE_IMAGE/thinturebike.jpg',
-		        iconSize: [40, 40],
-		        iconAnchor: [20, 20]
-		    }),
-		    car: L.icon({
-		        iconUrl: '/THINTURE_IMAGE/red2.png',
-		        iconSize: [50, 50],
-		        iconAnchor: [25, 25]
-		    }),
-		    truck: L.icon({
-		        iconUrl: 'https://example.com/icons/yellow-truck-icon.png',
-		        iconSize: [55, 55],
-		        iconAnchor: [27.5, 27.5]
-		    }),
-		    default: L.icon({
-		        iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
-		        iconSize: [25, 41],
-		        iconAnchor: [12, 41],
-		        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-		        shadowSize: [41, 41]
-		    })
-		};
+        // Define icons
+        const icons = {
+            default: L.icon({
+                iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+                iconSize: [25, 41],
+                iconAnchor: [12, 41]
+            })
+        };
 
-		// Function to select the icon based on vehicle type, or use default marker
-		function getVehicleIcon(vehicleType) {
-		    return icons[vehicleType] || icons['default'];
-		}
+        // Fetch address from coordinates
+        async function fetchAddress(lat, lon) {
+            const cacheKey = `${lat},${lon}`;
+            if (addressCache[cacheKey]) return addressCache[cacheKey];
+            try {
+                const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    const address = data.display_name || "Address not available";
+                    addressCache[cacheKey] = address;
+                    return address;
+                }
+            } catch (error) {
+                console.error("Error fetching address:", error);
+            }
+            return "Address not available";
+        }
 
-		// Fetch address from coordinates with caching
-		async function fetchAddress(lat, lon) {
-		    const cacheKey = `${lat},${lon}`;
-		    if (addressCache[cacheKey]) return addressCache[cacheKey];
+        // WebSocket connection
+        let socket = new WebSocket("ws://3.109.116.92:8181/gps-data");
 
-		    try {
-		        let response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`);
-		        if (response.ok) {
-		            let data = await response.json();
-		            const address = data.display_name || "Address not available";
-		            addressCache[cacheKey] = address;
-		            return address;
-		        }
-		    } catch (error) {
-		        console.error("Error fetching address:", error);
-		    }
-		    return "Address not available";
-		}
+        socket.onclose = function () {
+            setTimeout(() => {
+                socket = new WebSocket("ws://3.109.116.92:8181/gps-data");
+            }, 5000);
+        };
 
-		// Function to format timestamp like backend (Fri, 22 Nov 2024 12:01:55 IST)
-		// Define the same BASE_DATE_SECONDS value as the backend
-		const BASE_DATE_SECONDS = 946684800;
+        socket.onmessage = async function (event) {
+            try {
+                const data = JSON.parse(event.data);
+                const imei = data.deviceID;
+                const lat = data.latitude;
+                const lon = data.longitude;
+                const timestamp = new Date(data.timestamp * 1000).toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+                const speed = data.speed || 0;
+                const ignition = data.ignition ? "ON" : "OFF";
 
-		/**
-		 * Formats a given Unix timestamp to match the backend's formatted style.
-		 * @param {number} unixTimestamp - The Unix timestamp to be formatted.
-		 * @returns {string} - The formatted date string, e.g., "Fri, 22 Nov 2024 14:32:12 IST".
-		 */
-		function formatTimestampToBackendStyle(unixTimestamp) {
-		    // Add BASE_DATE_SECONDS to align with backend logic
-		    const adjustedTimestamp = unixTimestamp + BASE_DATE_SECONDS;
+                if (
+                    deviceDataCache[imei] &&
+                    deviceDataCache[imei].latitude === lat &&
+                    deviceDataCache[imei].longitude === lon
+                ) {
+                    return;
+                }
 
-		    // Convert adjusted timestamp to milliseconds for Date object
-		    let date = new Date(adjustedTimestamp * 1000);
+                deviceDataCache[imei] = { latitude: lat, longitude: lon };
 
-		    let options = {
-		        weekday: 'short',
-		        day: '2-digit',
-		        month: 'short',
-		        year: 'numeric',
-		        hour: '2-digit',
-		        minute: '2-digit',
-		        second: '2-digit',
-		        timeZone: 'Asia/Kolkata',
-		        timeZoneName: 'short'
-		    };
+                const address = await fetchAddress(lat, lon);
 
-		    const formattedDate = new Intl.DateTimeFormat('en-US', options).format(date);
+                const smallPopupContent = `
+                    <div class="custom-small-popup">
+                        <strong>${imei}</strong><br>
+                        Speed: ${speed} km/h<br>
+                        Ignition: ${ignition}
+                    </div>
+                `;
 
-		    // Log the adjusted timestamp and formatted date for debugging
-		    console.log(`DEBUG: Raw Unix Timestamp: ${unixTimestamp}`);
-		    console.log(`DEBUG: Adjusted Timestamp (With BASE_DATE_SECONDS): ${adjustedTimestamp}`);
-		    console.log(`DEBUG: Formatted Timestamp (Backend Style): ${formattedDate}`);
+                const largePopupContent = `
+                    <div class="custom-large-popup">
+                        <table>
+                            <tr><td>Device ID</td><td>${imei}</td></tr>
+                            <tr><td>Address</td><td>${address}</td></tr>
+                            <tr><td>Speed</td><td>${speed} km/h</td></tr>
+                            <tr><td>Ignition</td><td>${ignition}</td></tr>
+                            <tr><td>Last Updated</td><td>${timestamp}</td></tr>
+                        </table>
+                    </div>
+                `;
 
-		    return formattedDate;
-		}
+                if (markers[imei]) {
+                    map.removeLayer(markers[imei].marker);
+                    map.removeLayer(markers[imei].smallPopup);
+                }
 
-		// Example usage with the given timestamp
-		const exampleUnixTimestamp = 785581332; // Example timestamp
-		const formattedOutput = formatTimestampToBackendStyle(exampleUnixTimestamp);
-		console.log(`Formatted Output: ${formattedOutput}`); // Should log "Fri, 22 Nov 2024 14:32:12 IST"
+                const marker = L.marker([lat, lon], { icon: icons.default }).addTo(map);
+                marker.bindPopup(largePopupContent);
 
+                const smallPopup = L.popup({
+                    closeButton: false,
+                    autoClose: false,
+                    offset: L.point(0, -20),
+                    className: "custom-small-popup"
+                })
+                    .setLatLng([lat, lon])
+                    .setContent(smallPopupContent)
+                    .addTo(map);
 
-		// WebSocket connection
-		let socket = new WebSocket("ws://3.109.116.92:8181/gps-data");
-
-		// WebSocket auto-reconnection logic
-		socket.onclose = function () {
-		    console.warn("WebSocket closed. Reconnecting...");
-		    setTimeout(() => {
-		        socket = new WebSocket("ws://3.109.116.92:8181/gps-data");
-		    }, 5000); // Reconnect after 5 seconds
-		};
-
-		// Handle incoming GPS data from WebSocket
-		socket.onmessage = async function (event) {
-		    try {
-		        let data = JSON.parse(event.data);
-		        console.log(`DEBUG: Raw WebSocket Data:`, data); // Debugging raw data
-
-		        let imei = data.deviceID;
-		        let lat = data.latitude;
-		        let lon = data.longitude;
-		        let timestamp = formatTimestampToBackendStyle(data.timestamp); // Format timestamp for backend style
-		        let speed = data.speed || 0; // Get speed or default to 0 if not present
-		        let ignition = data.ignition ? "ON" : "OFF"; // Get ignition status
-		        console.log(`DEBUG: Ignition Status: ${ignition}`); // Log ignition status
-
-				
-				// Check if ignition is ON and play alert sound
-				                if (data.ignition) {
-				                    playAlertSound(); // Play sound if ignition is ON
-				                }
-								
-								
-								
-								
-		        // Skip updating if the data hasn't changed for this device
-		        if (
-		            deviceDataCache[imei] &&
-		            deviceDataCache[imei].latitude === lat &&
-		            deviceDataCache[imei].longitude === lon &&
-		            deviceDataCache[imei].timestamp === timestamp &&
-		            deviceDataCache[imei].speed === speed &&
-		            deviceDataCache[imei].ignition === ignition
-		        ) {
-		            console.log(`DEBUG: No changes for device ${imei}. Skipping update.`);
-		            return; // Skip updating the marker
-		        }
-
-		        // Update the cached data
-		        deviceDataCache[imei] = { latitude: lat, longitude: lon, timestamp, speed, ignition };
-
-		        let address = await fetchAddress(lat, lon);
-		        let vehicleType = document.getElementById("vehicleType").value || "default";
-
-		        console.log(`DEBUG: Address: ${address}, Vehicle Type: ${vehicleType}`); // Log address and vehicle type
-
-		        // Set marker icon based on selected vehicle type
-		        let icon = getVehicleIcon(vehicleType);
-
-		        // Remove existing marker if present
-		        if (markers[imei]) {
-		            map.removeLayer(markers[imei]);
-		        }
-
-		        // Add a new marker with the correct icon and popup content
-		        markers[imei] = L.marker([lat, lon], { icon: icon }).addTo(map)
-		            .bindPopup(`
-		                <b>Device ID:</b> ${imei}<br>
-		                <b>Address:</b> ${address}<br>
-		                <b>Type:</b> ${vehicleType}<br>
-		                <b>Speed:</b> ${speed} km/h<br>
-		                <b>Ignition:</b> ${ignition}<br>
-		                <b>Last Updated:</b> ${timestamp}
-		            `)
-		            .openPopup();
-		    } catch (error) {
-		        console.error("Error handling incoming WebSocket message:", error);
-		    }
-		};
-
-
-		// Error handling for WebSocket
-		socket.onerror = function (error) {
-		    console.error("WebSocket error:", error);
-		};
-
-		
-		function playAlertSound() {
-		            const alertSound = new Audio('/THINTURE_IMAGE/emergency.mp3'); // Provide your sound file URL
-		            alertSound.play();
-		        }
-				
-				
-				
-				
-	</script>
-
+                markers[imei] = { marker, smallPopup };
+            } catch (error) {
+                console.error("Error handling incoming WebSocket message:", error);
+            }
+        };
+    </script>
 </body>
 </html>

@@ -3,7 +3,9 @@ package com.ThintureGpsTrackerTcp.util;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -13,6 +15,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import io.reactivex.rxjava3.core.Observable;
+import io.reactivex.rxjava3.core.Single;
+import io.reactivex.rxjava3.schedulers.Schedulers;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,23 +26,34 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import com.ThintureGpsTrackerTcp.handler.GPSWebSocketHandler;
-
+import com.ThintureGpsTrackerTcp.model.DeviceHistory;
+import com.ThintureGpsTrackerTcp.repository.DeviceHistoryRepository;
+import com.ThintureGpsTrackerTcp.service.DeviceHistoryService;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 @Component
 public class PacketParser {
 
 	private static final Logger logger = LoggerFactory.getLogger(PacketParser.class);
 	private final GPSWebSocketHandler gpsWebSocketHandler;
+	 private final DeviceHistoryRepository deviceHistoryRepository;
 
-	// Constructor-based dependency injection for the WebSocket handler
-	@Autowired
-	public PacketParser(GPSWebSocketHandler gpsWebSocketHandler) {
-		this.gpsWebSocketHandler = gpsWebSocketHandler;
-	}
+	    @Autowired
+	    private DeviceHistoryService deviceHistoryService;
+	 @Autowired
+	 public PacketParser(GPSWebSocketHandler gpsWebSocketHandler, DeviceHistoryRepository deviceHistoryRepository) {
+	     this.gpsWebSocketHandler = gpsWebSocketHandler;
+	     this.deviceHistoryRepository = deviceHistoryRepository;
+	 }
 
+	
 	// Default constructor for compatibility (not ideal for production, primarily
 	// for testing)
 	public PacketParser() {
 		this.gpsWebSocketHandler = new GPSWebSocketHandler();
+		this.deviceHistoryRepository = null;
 	}
 
 	// Base date to calculate timestamps relative to the Unix epoch (Jan 1, 2000)
@@ -58,7 +74,7 @@ public class PacketParser {
 	    Double longitude = null; // Parsed longitude in decimal degrees
 	    Long timestamp = null; // Parsed timestamp in seconds
 	    Integer speed = null; // Parsed speed in km/h
-
+	    String ignitionState = null; // Ignition state (ON/OFF)
 	    logger.debug("\u001B[36mStarting extraction and broadcast of parameters for device {}\u001B[0m", deviceID);
 
 	    // Convert latitude hex string to decimal degrees
@@ -98,6 +114,10 @@ public class PacketParser {
 	        logger.warn("\u001B[33mDevice {} - No valid timestamp found in the buffer.\u001B[0m", deviceID);
 	    }
 
+	    
+	    
+	    
+	    
 	    // Extract speed from the buffer
 	    if (buffer != null) {
 	        for (int i = 0; i < buffer.length - 4; i++) {
@@ -117,23 +137,32 @@ public class PacketParser {
 	        logger.warn("\u001B[33mDevice {} - No valid speed found in the buffer.\u001B[0m", deviceID);
 	    }
 
-	    // Extract ignition status
+	 // Extract ignition status using extractAndLogSystemFlags
 	    Map<String, Boolean> systemFlags = extractAndLogSystemFlags(buffer, deviceID);
 	    boolean isIgnitionOn = systemFlags.getOrDefault("ACC Status (ON/OFF)", false);
-	    logger.info("\u001B[1;36mDevice {}\u001B[0m - Vehicle ignition is {}.", deviceID,
-	            isIgnitionOn ? "\u001B[1;32mON\u001B[0m" : "\u001B[1;31mOFF\u001B[0m");
+	   // logger.info("\u001B[1;36mDevice {}\u001B[0m - Ignition (System Flags) is {}.", deviceID,
+	     //       isIgnitionOn ? "\u001B[1;32mON\u001B[0m" : "\u001B[1;31mOFF\u001B[0m");
+
+	    // Extract ignition state using the processStateChange method
+	    ignitionState = processStateChange(buffer, deviceID);
+
+	    // Log the ignition state
+	    if (ignitionState != null) {
+	        logger.info("\u001B[36mDevice {} - Ignition (ProcessStateChange) is: {}\u001B[0m", deviceID, ignitionState);
+	    } else {
+	        logger.warn("\u001B[33mDevice {} - Ignition state could not be determined.\u001B[0m", deviceID);
+	    }
 
 	    // Broadcast data if all values are valid
 	    if (latitude != null && longitude != null && timestamp != null && speed != null) {
 	        try {
-	            gpsWebSocketHandler.broadcastLocationWithIgnition(deviceID, latitude, longitude, timestamp, speed,
-	                    isIgnitionOn);
+	            gpsWebSocketHandler.broadcastLocationWithIgnition(deviceID, latitude, longitude, timestamp, speed, isIgnitionOn, ignitionState);
 	            logger.debug(
-	                    "\u001B[36mDevice {} - Broadcasted latitude, longitude, timestamp, speed, and ignition status successfully.\u001B[0m",
+	                    "\u001B[36mDevice {} - Broadcasted latitude, longitude, timestamp, speed, and ignition state (System Flags) successfully.\u001B[0m",
 	                    deviceID);
 	        } catch (Exception e) {
 	            logger.error(
-	                    "\u001B[31mDevice {} - Error broadcasting location, timestamp, and speed via WebSocket: {}\u001B[0m",
+	                    "\u001B[31mDevice {} - Error broadcasting location, timestamp, speed, and ignition state via WebSocket: {}\u001B[0m",
 	                    deviceID, e.getMessage());
 	        }
 	    } else {
@@ -143,6 +172,131 @@ public class PacketParser {
 	    }
 	}
 
+	
+	
+	public void extractAndSaveParameters(String deviceID, String latitudeHex, String longitudeHex, byte[] buffer) {
+	    logger.debug("Starting extraction and saving of parameters for device ID: {}", deviceID);
+
+	    Double latitude = null;
+	    Double longitude = null;
+	    Long timestamp = null;
+	    Integer speed = null;
+	    String ignitionState = null;
+
+	    // Latitude Extraction and Conversion
+	    try {
+	        logger.debug("Device {}: Attempting to convert latitude from hex: {}", deviceID, latitudeHex);
+	        latitude = convertHexToDegrees(latitudeHex);
+	        logger.info("Device {}: Parsed Latitude: {} degrees", deviceID, latitude);
+	    } catch (IllegalArgumentException e) {
+	        logger.error("Device {}: Latitude conversion failed: {}", deviceID, e.getMessage(), e);
+	    }
+
+	    // Longitude Extraction and Conversion
+	    try {
+	        logger.debug("Device {}: Attempting to convert longitude from hex: {}", deviceID, longitudeHex);
+	        longitude = convertHexToDegrees(longitudeHex);
+	        logger.info("Device {}: Parsed Longitude: {} degrees", deviceID, longitude);
+	    } catch (IllegalArgumentException e) {
+	        logger.error("Device {}: Longitude conversion failed: {}", deviceID, e.getMessage(), e);
+	    }
+
+	    // Timestamp Extraction
+	    try {
+	        logger.debug("Device {}: Attempting to extract timestamp from buffer", deviceID);
+	        String timestampHex = extractHex(buffer, 0x04);
+	        if (timestampHex != null) {
+	            byte[] timestampBytes = parseHexStringToByteArray(timestampHex);
+	            timestamp = convertHexToTimestamp(timestampBytes);
+	            logger.info("Device {}: Extracted and Formatted Timestamp: {}", deviceID, timestamp);
+	        } else {
+	            logger.warn("Device {}: Timestamp hex missing in buffer", deviceID);
+	        }
+	    } catch (Exception e) {
+	        logger.error("Device {}: Error extracting timestamp: {}", deviceID, e.getMessage(), e);
+	    }
+
+	    // Speed Extraction
+	    logger.debug("Device {}: Attempting to extract speed from buffer", deviceID);
+	    speed = extractSpeedFromBuffer(buffer, deviceID);
+
+	    // Ignition State Extraction
+	    logger.debug("Device {}: Attempting to determine ignition state from buffer", deviceID);
+	    ignitionState = processStateChange(buffer, deviceID);
+
+	    // Saving Data to Database
+	    logger.debug("Device {}: Preparing to save data to database", deviceID);
+	    saveToDatabase(deviceID, latitude, longitude, timestamp, speed, ignitionState);
+	    logger.debug("Device {}: Data save process completed", deviceID);
+	}
+
+	private Integer extractSpeedFromBuffer(byte[] buffer, String deviceID) {
+	    try {
+	        logger.debug("Device {}: Starting speed extraction from buffer", deviceID);
+	        if (buffer != null) {
+	            for (int i = 0; i < buffer.length - 4; i++) {
+	                if (buffer[i] == (byte) 0x08 && (i + 3) < buffer.length && buffer[i + 3] == (byte) 0x09) {
+	                    int speedLSB = buffer[i + 1] & 0xFF;
+	                    int speedMSB = buffer[i + 2] & 0xFF;
+	                    int speed = (speedMSB << 8) | speedLSB;
+	                    logger.info("Device {}: Extracted Speed: {} km/h", deviceID, speed);
+	                    return speed;
+	                }
+	            }
+	        }
+	    } catch (Exception e) {
+	        logger.error("Device {}: Error extracting speed: {}", deviceID, e.getMessage(), e);
+	    }
+	    logger.warn("Device {}: Speed extraction failed, returning 0", deviceID);
+	    return 0; // Default speed
+	}
+
+	private void saveToDatabase(String deviceID, Double latitude, Double longitude, Long timestamp, Integer speed, String ignitionState) {
+	    try {
+	        logger.debug("Preparing to save data: DeviceID: {}, Latitude: {}, Longitude: {}, Timestamp (Epoch): {}, Speed: {}, IgnitionState: {}",
+	            deviceID, latitude, longitude, timestamp, speed, ignitionState);
+
+	        if (deviceID == null || latitude == null || longitude == null || timestamp == null) {
+	            logger.warn("Missing required fields for saving: DeviceID: {}, Timestamp: {}", deviceID, timestamp);
+	            return;
+	        }
+
+	        // Log raw timestamp
+	        logger.debug("Raw timestamp (Epoch seconds): {}", timestamp);
+
+	        // Convert the timestamp to LocalDateTime (UTC)
+	        ZonedDateTime utcDateTime = ZonedDateTime.ofInstant(Instant.ofEpochSecond(timestamp), ZoneId.of("UTC"));
+	        logger.debug("Converted timestamp to UTC: {}", utcDateTime);
+
+	        // Convert to Asia/Kolkata time zone
+	        ZonedDateTime kolkataDateTime = utcDateTime.withZoneSameInstant(ZoneId.of("Asia/Kolkata"));
+	        logger.debug("Converted UTC timestamp to Asia/Kolkata LocalDateTime: {}", kolkataDateTime);
+
+	        // Create DeviceHistory object and set properties
+	        DeviceHistory history = new DeviceHistory();
+	        history.setDeviceId(deviceID);
+	        history.setLatitude(latitude);
+	        history.setLongitude(longitude);
+	        history.setTimestamp(kolkataDateTime.toLocalDateTime());  // Store as LocalDateTime
+	        history.setSpeed(speed);
+	        history.setIgnitionState(ignitionState);
+
+	        // Log the final history object
+	        logger.debug("Final DeviceHistory object to be saved: {}", history);
+
+	        // Save to database
+	        deviceHistoryService.saveDeviceHistory(history); // Delegating to service
+	        logger.info("DeviceHistory saved successfully: {}", history);
+	    } catch (Exception e) {
+	        logger.error("Error saving to database: {}", e.getMessage(), e);
+	    }
+	}
+
+
+
+
+	
+	
 	/**
 	 * Converts a hexadecimal string to decimal degrees. The input string is
 	 * expected to contain three or four space-separated hex values. The values are
@@ -373,7 +527,7 @@ public class PacketParser {
 	    boolean loggedOnce = false; // Flag to ensure only one log per valid system flag
 
 	    if (buffer == null || buffer.length < 5) {
-	        logger.warn("Device {} - Buffer is null or too short to contain system flags.", deviceID);
+	    	//    logger.warn("Device {} - Buffer is null or too short to contain system flags.", deviceID);
 	        return systemFlags;
 	    }
 
@@ -408,21 +562,21 @@ public class PacketParser {
 
 	                // Log details
 	                if (!loggedOnce) {
-	                    logger.info("Device {} - Extracted System Flag Hex: {}", deviceID, systemFlagHex);
-	                    logger.info("Device {} - Decoded System Flags: {}", deviceID, systemFlags);
-	                    logger.info("\u001B[36mDevice {}\u001B[0m - Ignition (ACC) Status: \u001B[33m{}\u001B[0m",
-	                            deviceID, isIgnitionOn ? "\u001B[32mON\u001B[0m" : "\u001B[31mOFF\u001B[0m");
-
+	                	//            logger.info("Device {} - Extracted System Flag Hex: {}", deviceID, systemFlagHex);
+	                    //              logger.info("Device {} - Decoded System Flags: {}", deviceID, systemFlags);
+	                    //               logger.info("\u001B[36mDevice {}\u001B[0m - Ignition (ACC) Status: \u001B[33m{}\u001B[0m",
+	                	//                deviceID, isIgnitionOn ? "\u001B[32mON\u001B[0m" : "\u001B[31mOFF\u001B[0m");
+	                            //
 	                    loggedOnce = true;
 	                }
 	            } else {
-	                logger.warn("Device {} - Insufficient bytes for system flag after marker 0x1C.", deviceID);
+	            //    logger.warn("Device {} - Insufficient bytes for system flag after marker 0x1C.", deviceID);
 	            }
 	        }
 	    }
 
 	    if (systemFlags.isEmpty()) {
-	        logger.warn("Device {} - No valid system flag data found in the packet.", deviceID);
+	    	//    logger.warn("Device {} - No valid system flag data found in the packet.", deviceID);
 	    }
 
 	    return systemFlags;
@@ -457,10 +611,10 @@ public class PacketParser {
 																														// DWORD
 					double mileageKm = mileage / 1000.0; // Convert meters to kilometers
 
-					logger.info("\u001B[36mDevice {} - Extracted System Mileage Hex: {}\u001B[0m", deviceID,
-							mileageHex);
-					logger.info("\u001B[32mDevice {} - Extracted Mileage: {} meters ({} kilometers)\u001B[0m", deviceID,
-							mileage, mileageKm);
+					//			logger.info("\u001B[36mDevice {} - Extracted System Mileage Hex: {}\u001B[0m", deviceID,
+					//		mileageHex);
+					//				logger.info("\u001B[32mDevice {} - Extracted Mileage: {} meters ({} kilometers)\u001B[0m", deviceID,
+					//	mileage, mileageKm);
 
 					extractedParams.put("MileageMeters", mileage);
 					extractedParams.put("MileageKilometers", mileageKm);
@@ -488,9 +642,9 @@ public class PacketParser {
 					// Format the run time as HH:mm:ss
 					String runTimeFormattedTime = String.format("%02d:%02d:%02d", hours, minutes, seconds);
 
-					logger.info("Device {} - Extracted System Run Time Hex: {}", deviceID, runTimeHex);
-					logger.info("Device {} - Extracted Run Time: {} seconds", deviceID, runTimeSeconds);
-					logger.info("Device {} - Run Time formatted as time: {}", deviceID, runTimeFormattedTime);
+					//				logger.info("Device {} - Extracted System Run Time Hex: {}", deviceID, runTimeHex);
+					//			logger.info("Device {} - Extracted Run Time: {} seconds", deviceID, runTimeSeconds);
+					//				logger.info("Device {} - Run Time formatted as time: {}", deviceID, runTimeFormattedTime);
 
 					extractedParams.put("RunTimeSeconds", runTimeSeconds);
 					extractedParams.put("RunTimeFormattedTime", runTimeFormattedTime);
@@ -514,8 +668,8 @@ public class PacketParser {
 					short altitudeValue = ByteBuffer.wrap(altitudeBytes).order(ByteOrder.LITTLE_ENDIAN).getShort(); // Signed
 																													// SINT16
 
-					logger.info("Device {} - Extracted Altitude Hex: {}", deviceID, altitudeHex);
-					logger.info("Device {} - Calculated Altitude: {} meters", deviceID, altitudeValue);
+					//			logger.info("Device {} - Extracted Altitude Hex: {}", deviceID, altitudeHex);
+					//			logger.info("Device {} - Calculated Altitude: {} meters", deviceID, altitudeValue);
 
 					altitude = (double) altitudeValue;
 					break; // Stop after finding the first Altitude parameter
@@ -524,7 +678,7 @@ public class PacketParser {
 		}
 
 		if (altitude == null) {
-			logger.warn("Device {} - Altitude data not found or validation failed.", deviceID);
+			//	logger.warn("Device {} - Altitude data not found or validation failed.", deviceID);
 		}
 
 		return altitude;
@@ -544,8 +698,8 @@ public class PacketParser {
 				int ad1Value = ByteBuffer.wrap(ad1Bytes).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xFFFF;
 				double ad1Voltage = ad1Value / 100.0;
 
-				logger.info("\u001B[34mDevice {} - Extracted AD1 Hex: {}\u001B[0m", deviceID, ad1Hex);
-				logger.info("\u001B[34mDevice {} - Extracted AD1 Voltage: {:.2f} V\u001B[0m", deviceID, ad1Voltage);
+				//	logger.info("\u001B[34mDevice {} - Extracted AD1 Hex: {}\u001B[0m", deviceID, ad1Hex);
+				//		logger.info("\u001B[34mDevice {} - Extracted AD1 Voltage: {:.2f} V\u001B[0m", deviceID, ad1Voltage);
 
 				extractedParams.put("AD1", String.format("%.2f V", ad1Voltage));
 				loggedParams.add("AD1"); // Mark as logged
@@ -561,10 +715,10 @@ public class PacketParser {
 				double ad4Voltage = ad4Value / 100.0;
 				double batteryPercentage = Math.max(0, Math.min((ad4Voltage - 3.4) / 0.8 * 100, 100));
 
-				logger.info("\u001B[32mDevice {} - Extracted AD4 Hex: {}\u001B[0m", deviceID, ad4Hex);
-				logger.info("\u001B[32mDevice {} - Extracted AD4 Voltage: {:.2f} V\u001B[0m", deviceID, ad4Voltage);
-				logger.info("\u001B[32mDevice {} - Extracted Battery Percentage: {:.0f}%\u001B[0m", deviceID,
-						batteryPercentage);
+				//		logger.info("\u001B[32mDevice {} - Extracted AD4 Hex: {}\u001B[0m", deviceID, ad4Hex);
+				//		logger.info("\u001B[32mDevice {} - Extracted AD4 Voltage: {:.2f} V\u001B[0m", deviceID, ad4Voltage);
+				//		logger.info("\u001B[32mDevice {} - Extracted Battery Percentage: {:.0f}%\u001B[0m", deviceID,
+				//	batteryPercentage);
 
 				extractedParams.put("AD4", String.format("%.2f V (%.0f%%)", ad4Voltage, batteryPercentage));
 				loggedParams.add("AD4"); // Mark as logged
@@ -579,8 +733,8 @@ public class PacketParser {
 				int ad5Value = ByteBuffer.wrap(ad5Bytes).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xFFFF;
 				double ad5Voltage = ad5Value / 100.0;
 
-				logger.info("\u001B[36mDevice {} - Extracted AD5 Hex: {}\u001B[0m", deviceID, ad5Hex);
-				logger.info("\u001B[36mDevice {} - Extracted AD5 Voltage: {:.2f} V\u001B[0m", deviceID, ad5Voltage);
+				//		logger.info("\u001B[36mDevice {} - Extracted AD5 Hex: {}\u001B[0m", deviceID, ad5Hex);
+				//	logger.info("\u001B[36mDevice {} - Extracted AD5 Voltage: {:.2f} V\u001B[0m", deviceID, ad5Voltage);
 
 				extractedParams.put("AD5", String.format("%.2f V", ad5Voltage));
 				loggedParams.add("AD5"); // Mark as logged
@@ -603,10 +757,10 @@ public class PacketParser {
 					int directionValue = ByteBuffer.wrap(directionBytes).order(ByteOrder.LITTLE_ENDIAN).getShort()
 							& 0xFFFF;
 
-					logger.info("\u001B[35mDevice {} - Extracted Driving Direction Hex: {}\u001B[0m", deviceID,
-							directionHex);
-					logger.info("\u001B[35mDevice {} - Calculated Driving Direction: {} degrees\u001B[0m", deviceID,
-							directionValue);
+					//	logger.info("\u001B[35mDevice {} - Extracted Driving Direction Hex: {}\u001B[0m", deviceID,
+					//	directionHex);
+							//	logger.info("\u001B[35mDevice {} - Calculated Driving Direction: {} degrees\u001B[0m", deviceID,
+					//	directionValue);
 
 					extractedParams.put("DrivingDirection", directionValue);
 					loggedParams.add("DrivingDirection"); // Mark as logged
@@ -623,8 +777,8 @@ public class PacketParser {
 					int hdopValue = ByteBuffer.wrap(hdopBytes).order(ByteOrder.LITTLE_ENDIAN).getShort() & 0xFFFF;
 					double hdopPrecision = hdopValue / 10.0; // Convert to correct precision
 
-					logger.info("\u001B[33mDevice {} - Extracted HDOP Hex: {}\u001B[0m", deviceID, hdopHex);
-					logger.info("\u001B[33mDevice {} - Calculated HDOP: {:.1f}\u001B[0m", deviceID, hdopPrecision);
+					//	logger.info("\u001B[33mDevice {} - Extracted HDOP Hex: {}\u001B[0m", deviceID, hdopHex);
+					//	logger.info("\u001B[33mDevice {} - Calculated HDOP: {:.1f}\u001B[0m", deviceID, hdopPrecision);
 
 					extractedParams.put("HDOP", hdopPrecision);
 					loggedParams.add("HDOP"); // Mark as logged
@@ -649,11 +803,11 @@ public class PacketParser {
 			case 0x05: // GPS Positioning Status
 				byte gpsStatus = buffer[i + 1];
 				String gpsStatusHex = String.format("0x%02X", gpsStatus);
-				logger.info("\u001B[35mDevice {} - GPS Positioning Status Hex: {}\u001B[0m", deviceID, gpsStatusHex);
+				//	logger.info("\u001B[35mDevice {} - GPS Positioning Status Hex: {}\u001B[0m", deviceID, gpsStatusHex);
 
 				String gpsPositioningStatus = gpsStatus == 0x01 ? "Valid" : "Invalid";
-				logger.info("\u001B[33mDevice {} - GPS Positioning Status: {}\u001B[0m", deviceID,
-						gpsPositioningStatus);
+				//		logger.info("\u001B[33mDevice {} - GPS Positioning Status: {}\u001B[0m", deviceID,
+				//			gpsPositioningStatus);
 
 				extractedParams.put("GPSPositioningStatus", gpsPositioningStatus);
 				processedParameters.add(paramID);
@@ -662,10 +816,10 @@ public class PacketParser {
 			case 0x06: // Number of Satellites
 				byte satellites = buffer[i + 1];
 				String satellitesHex = String.format("0x%02X", satellites);
-				logger.info("\u001B[36mDevice {} - Number of Satellites Hex: {}\u001B[0m", deviceID, satellitesHex);
+				//	logger.info("\u001B[36mDevice {} - Number of Satellites Hex: {}\u001B[0m", deviceID, satellitesHex);
 
 				int numberOfSatellites = satellites & 0xFF;
-				logger.info("\u001B[34mDevice {} - Number of Satellites: {}\u001B[0m", deviceID, numberOfSatellites);
+				//	logger.info("\u001B[34mDevice {} - Number of Satellites: {}\u001B[0m", deviceID, numberOfSatellites);
 
 				extractedParams.put("NumberOfSatellites", numberOfSatellites);
 				processedParameters.add(paramID);
@@ -674,10 +828,10 @@ public class PacketParser {
 			case 0x07: // GSM Signal Strength
 				byte gsmSignal = buffer[i + 1];
 				String gsmSignalHex = String.format("0x%02X", gsmSignal);
-				logger.info("\u001B[32mDevice {} - GSM Signal Strength Hex: {}\u001B[0m", deviceID, gsmSignalHex);
+				//	logger.info("\u001B[32mDevice {} - GSM Signal Strength Hex: {}\u001B[0m", deviceID, gsmSignalHex);
 
 				int signalStrength = gsmSignal & 0xFF;
-				logger.info("\u001B[31mDevice {} - GSM Signal Strength: {}\u001B[0m", deviceID, signalStrength);
+				//	logger.info("\u001B[31mDevice {} - GSM Signal Strength: {}\u001B[0m", deviceID, signalStrength);
 
 				extractedParams.put("GSMSignalStrength", signalStrength);
 				processedParameters.add(paramID);
@@ -686,11 +840,11 @@ public class PacketParser {
 			case 0x14: // Output Port Status
 				byte outputStatus = buffer[i + 1];
 				String outputHex = String.format("0x%02X", outputStatus);
-				logger.info("\u001B[35mDevice {} - Output Port Status Hex: {}\u001B[0m", deviceID, outputHex);
+				//	logger.info("\u001B[35mDevice {} - Output Port Status Hex: {}\u001B[0m", deviceID, outputHex);
 
 				String outputBinary = String.format("%8s", Integer.toBinaryString(outputStatus & 0xFF)).replace(' ',
 						'0');
-				logger.info("\u001B[33mDevice {} - Output Port Status (Binary): {}\u001B[0m", deviceID, outputBinary);
+				//	logger.info("\u001B[33mDevice {} - Output Port Status (Binary): {}\u001B[0m", deviceID, outputBinary);
 
 				extractedParams.put("OutputPortStatus", outputBinary);
 				processedParameters.add(paramID);
@@ -699,10 +853,10 @@ public class PacketParser {
 			case 0x15: // Input Port Status
 				byte inputStatus = buffer[i + 1];
 				String inputHex = String.format("0x%02X", inputStatus);
-				logger.info("\u001B[36mDevice {} - Input Port Status Hex: {}\u001B[0m", deviceID, inputHex);
+				//	logger.info("\u001B[36mDevice {} - Input Port Status Hex: {}\u001B[0m", deviceID, inputHex);
 
 				String inputBinary = String.format("%8s", Integer.toBinaryString(inputStatus & 0xFF)).replace(' ', '0');
-				logger.info("\u001B[34mDevice {} - Input Port Status (Binary): {}\u001B[0m", deviceID, inputBinary);
+				//	logger.info("\u001B[34mDevice {} - Input Port Status (Binary): {}\u001B[0m", deviceID, inputBinary);
 
 				extractedParams.put("InputPortStatus", inputBinary);
 				processedParameters.add(paramID);
@@ -711,10 +865,10 @@ public class PacketParser {
 			case 0x1B: // Geo-fence Number
 				byte geoFence = buffer[i + 1];
 				String geoFenceHex = String.format("0x%02X", geoFence);
-				logger.info("\u001B[32mDevice {} - Geo-fence Number Hex: {}\u001B[0m", deviceID, geoFenceHex);
+			//	logger.info("\u001B[32mDevice {} - Geo-fence Number Hex: {}\u001B[0m", deviceID, geoFenceHex);
 
 				int geoFenceNumber = geoFence & 0xFF;
-				logger.info("\u001B[31mDevice {} - Geo-fence Number: {}\u001B[0m", deviceID, geoFenceNumber);
+				//	logger.info("\u001B[31mDevice {} - Geo-fence Number: {}\u001B[0m", deviceID, geoFenceNumber);
 
 				extractedParams.put("GeoFenceNumber", geoFenceNumber);
 				processedParameters.add(paramID);
@@ -727,6 +881,54 @@ public class PacketParser {
 
 		return extractedParams;
 	}
+	
+	
+	
+	/**
+	 * Processes the ignition state from the packet buffer and logs whether it is ON or OFF.
+	 *
+	 * @param buffer   The byte array containing the packet data.
+	 * @param deviceID The unique identifier of the device.
+	 * @return The state ("ON" or "OFF") if successfully processed, or null if not found.
+	 */
+	public String processStateChange(byte[] buffer, String deviceID) {
+	    String state = null;
+
+	    // Iterate through the buffer to locate the 0x15 marker
+	    for (int i = 0; i < buffer.length - 1; i++) {
+	        if (buffer[i] == (byte) 0x15) { // Check for the 0x15 marker
+	            byte stateByte = buffer[i + 1]; // The byte immediately following 0x15
+
+	            // Determine the state based on the value of the stateByte
+	            if (stateByte == (byte) 0x01) {
+	                state = "ON";
+	            } else if (stateByte == (byte) 0x00) {
+	                state = "OFF";
+	            } else {
+	                logger.warn("Device {} - Invalid state byte following 0x15 marker: 0x{}", deviceID, String.format("%02X", stateByte));
+	                break; // Exit the loop for invalid state
+	            }
+
+	            // Log the state change with a clear message
+	            logger.info(
+	                "\u001B[1;36mDevice {}\u001B[0m - Ignition (ACC) State: \u001B[{}m{}\u001B[0m",
+	                deviceID,
+	                "ON".equals(state) ? "1;32" : "1;31", // Green for ON, Red for OFF
+	                state
+	            );
+
+	            break; // Exit the loop after processing the first valid state change
+	        }
+	    }
+
+	    // Log a warning if the 0x15 marker was not found in the buffer
+	    if (state == null) {
+	        logger.warn("Device {} - Ignition state marker (0x15) not found in the packet.", deviceID);
+	    }
+
+	    return state;
+	}
+
 
 	/**
 	 * Converts a byte array to a hex string for debugging.
@@ -741,5 +943,7 @@ public class PacketParser {
 		}
 		return hexBuilder.toString().trim();
 	}
+	
+	
 
 }
