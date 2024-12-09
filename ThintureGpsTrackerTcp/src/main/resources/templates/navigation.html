@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+	
+    <title>THINTURE - Fleet Management</title>
+</head>
+<body>
+    <!-- navigation.html -->
+    <div th:fragment="navbar">
+        <nav class="navbar">
+			
+            <div class="navbar-container">
+                <a href="#" class="logo">
+                    <img src="/THINTURE_IMAGE/Thinture.jpg" alt="Fleet Tracking Logo">
+                </a>
+                <ul>
+					<li>
+					          <a href="/dashboard" class="home-button"><strong>HOME</strong></a>
+					      </li>
+                    <li>
+                        <a href="#" class="dropdown-toggle"><strong>SUPERADMIN</strong></a>
+                        <div class="dropdown-content">
+                            <a href="admins/add">Add Admin</a>
+                            <a href="/dealers/add">Add Dealer</a>
+                            <a href="/add_driver">Add Driver</a>
+                            <a href="/add_client.html">Add Client</a>
+                            <a href="/users/add">Add User</a>
+							 <a href="/panic">panic</a>
+							 <a href="/dealer/addDevices">Add Devicess</a>
+
+                        </div>
+                    </li>
+                    <li>
+                        <a href="#" class="dropdown-toggle"><strong>TRACKING</strong></a>
+                        <div class="dropdown-content">
+                            <a href="/map">LiveTracking</a>
+                            <a href="#history">History</a>
+                            <a href="#reports">Reports</a>
+							<a href="/replay">rplay</a>
+                        </div>
+                    </li>
+                    <li>
+                        <a href="#" class="dropdown-toggle"><strong>INSTALLATION</strong></a>
+                        <div class="dropdown-content">
+                            <a href="/createdevices">Install</a>
+                            <a href="#renewal">Renewal</a>
+                            <a href="#search">Search</a>
+                        </div>
+                    </li>
+                    <li>
+                        <a href="#" class="dropdown-toggle"><strong>REPORTS</strong></a>
+                        <div class="dropdown-content">
+                            <a href="/admin">Admin Reports</a>
+                            <a href="/dealer">Dealer Reports</a>
+                            <a href="/clients">Clients Reports</a>
+                            <a href="/driver-report">Driver Reports</a>
+                            <a href="/vehicle_report">Vehicle Reports</a>
+							<a href="/vehicle-violations">vehicle-violations_report</a>
+                            <a href="#monthly">Monthly Reports</a>
+							
+                        </div>
+                    </li>
+                    <li>
+                        <a href="#" class="dropdown-toggle"><strong>INFORMATIONS</strong></a>
+                        <div class="dropdown-content">
+                            <a href="Admin_details.html">Admin</a>
+                           <a href="dealers/view">Dealer</a>
+                            <a href="Client_details.html">Client</a>
+                            <a href="/total_users">User</a>
+										<a href="/drivers/view">driver details</a>
+							<a href="/total_vehicles">Vehicle</a>
+                            
+                        </div>
+                    </li>
+                    <li>
+                        <a href="#" class="dropdown-toggle"><strong>HELP & SUPPORT</strong></a>
+                        <div class="dropdown-content">
+                           
+                            <a href="#contact">Contact Us</a>
+                            
+                        </div>
+                    </li>
+                    <li>
+                        <a href="#" class="dropdown-toggle"><strong>PROFILE</strong></a>
+                        <div class="dropdown-content">
+                            <a href="#view-profile">View Profile</a>
+                            <a href="#logout">Logout</a>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+        </nav>
+    </div>
+</body>
+</html>
