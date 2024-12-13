@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Dynamic Fleet Tracking with Map Switching</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+        }
+		.navbar {
+				    background: linear-gradient(135deg, white, white, #151B54, #151B54, #151B54, #151B54);
+				    width: 100%;
+				    position: fixed;
+				    height: 110px;
+				    top: 0;
+				    z-index: 1000;
+				    box-shadow:
+				        0 2px 5px rgba(0, 0, 0, 0.3),
+				        0 6px 15px rgba(0, 0, 169, 0.5);
+				}
+
+				.navbar-container {
+				    display: flex;
+				    align-items: center;
+				    justify-content: space-between;
+				    padding: 10px 20px;
+				    margin-right: 60px;
+				}
+
+				.navbar h1 {
+				    margin: 0;
+				    font-size: 20px;
+				}
+
+				.navbar ul {
+				    list-style-type: none;
+				    padding: 0;
+				    margin: 0;
+				    display: flex;
+				    font-weight: bold;
+				}
+
+				.navbar ul li {
+				    position: relative;
+				    margin: 0 10px;
+				    font-size: 14px;
+				}
+
+				.navbar ul li a {
+				    color: white;
+				    text-decoration: none;
+				    padding: 10px;
+				    display: block;
+				    font-style: normal;
+				}
+
+				.navbar ul li a:hover {
+				    border-radius: 5px;
+				    text-decoration: underline;
+				}
+
+				.navbar ul li .dropdown-content {
+				    display: none;
+				    position: absolute;
+				    top: 100%;
+				    left: 0;
+				    background-color: rgba(100, 130, 150, 0.9);
+				    color: #000;
+				    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+				    border-radius: 5px;
+				    min-width: 160px;
+				    z-index: 1000;
+				    font-size: small;
+				}
+
+				.navbar ul li:hover .dropdown-content {
+				    display: block;
+				}
+
+				.navbar ul li .dropdown-content a {
+				    color: white;
+					border-radius: 5px;
+				    padding: 10px;
+				    display: block;
+				    text-decoration: none;
+				}
+
+				.navbar ul li .submenu-content {
+				    display: none;
+					border-radius: 5px;
+				    position: absolute;
+				    left: 160px;
+				    top: 0;
+				    background-color: rgba(100, 130, 150, 0.9);
+				    min-width: 160px;
+				    z-index: 2;
+				}
+
+				.navbar ul li .submenu-toggle:hover + .submenu-content,
+				.navbar ul li .submenu-content:hover {
+				    display: block;
+				}
+
+				.navbar ul li .submenu-content a {
+				    color: white;
+				    padding: 10px;
+					
+				    display: block;
+				    text-decoration: none;
+				}
+
+				.navbar ul li .submenu-contentdevice {
+				    display: none;
+				    position: absolute;
+				    left: 160px;
+				    top: 80px;
+					border-radius: 5px;
+				    background-color: rgba(100, 130, 150, 0.9);
+				    min-width: 160px;
+				    z-index: 2;
+				}
+
+				.navbar ul li .submenu-toggle:hover + .submenu-contentdevice,
+				.navbar ul li .submenu-contentdevice:hover {
+				    display: block;
+				}
+				.navbar ul li .submenu-contentdv {
+						    display: none;
+						    position: absolute;
+						    left: 160px;
+							border-radius: 5px;
+						    top: 50px;
+						    background-color: rgba(100, 130, 150, 0.9);
+						    min-width: 160px;
+						    z-index: 2;
+						}
+
+						.navbar ul li .submenu-toggle:hover + .submenu-contentdv,
+						.navbar ul li .submenu-contentdv:hover {
+						    display: block;
+						}
+				
+
+				.logo img {
+				    height: 90px;
+				    width: 210px;
+				    margin-right: 10px;
+				}
+        #stats {
+              background: rgba(0, 0,0, 0.9);
+            color:red;
+            display: flex;
+            justify-content: space-around;
+            padding: 5px;
+            font-size: 14px;
+            text-align: center;
+            position: fixed;
+            top: 115px;
+            right: 0;
+            width: 20%;
+            z-index: 1000;
+        }
+        #sidebar {
+            position: fixed;
+            top: 150px;
+            right: 0;
+            width: 350px;
+            height: calc(100vh - 50px);
+            background: rgba(0, 0,0, 0.6);
+            color: white;
+            overflow-y: auto;
+            z-index: 999;
+            padding: 10px;
+            box-shadow: 2px 0 5px rgba(0, 0, 0, 0.3);
+            transform: translateX(0);
+            transition: transform 0.3s ease;
+        }
+        #sidebar.hidden {
+            transform: translateX(100%);
+        }
+        #toggleButton {
+            position: fixed;
+            top: 150px;
+            right: 360px;
+            width: 40px;
+            height: 40px;
+            background-color:black;
+            color:red;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 16px;
+            z-index: 1000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        #map {
+            margin-top: 145px;
+            height: calc(100vh - 150px);
+			position: sticky;
+        }
+        #trackerTable {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        #trackerTable th, #trackerTable td {
+            border: 1px solid #ddd;
+            padding: 5px;
+            text-align: center;
+        }
+        #trackerTable th {
+            background: rgba(150, 150, 145, 0.9);
+            color: white;
+        }
+        .status-icon {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            font-size: 12px;
+            line-height: 20px;
+            text-align: center;
+            font-weight: bold;
+        }
+        #mapSwitcher {
+            position: fixed;
+            top: 250px;
+            left: 1px;
+			
+			height:150px;
+              background: rgba(0, 0,0, 0.1);
+            border-radius: 15px;
+            padding: 20px;
+            z-index: 1001;
+            display: flex;
+            flex-direction: column;
+        }
+        .map-button {
+            margin: 5px 0;
+            cursor: pointer;
+        }
+        .map-button img {
+            width: 40px;
+            height: 40px;
+            border-radius: 5px;
+            border: 2px solid transparent;
+            transition: border-color 0.3s;
+        }
+        .map-button img:hover {
+            border-color: yellow;
+        }
+		.fas{
+			color:darkblue;
+			font-size: 25px;
+		}
+		h2 {
+						    text-align: center;
+						    font-size: 2em; /* Adjust size as needed */
+							font-weight: 400;
+						    color:white; /* Text color */
+						    text-shadow: 
+							1px 1px 2px rgba(0, 0, 0, 0.4), /* First shadow for initial depth */
+							        3px 3px 5px rgba(0, 0, 0, 0.3), /* Slightly darker shadow for increased depth */
+							        6px 6px 8px rgba(0, 0, 0, 0.2); /* Darker shadow for stronger 3D effect */
+							}
+    </style>
+</head>
+<body>
+	<div class="navbar">
+	        <div class="navbar-container">
+	            <a href="#" class="logo">
+	                <img src="THINTURE_IMAGE/Thinture.png" alt="Fleet Tracking Logo" ">
+	            </a>
+				<ul>
+				    <li>
+				        <a href="#" class="dropdown-toggle"><strong>SUPERADMIN</strong></a>
+				        <div class="dropdown-content">
+				            <a href="#" class="submenu-toggle">  MULTI-ROLE</a>
+				            <div class="submenu-content">
+				                <a href="Add_admin.html">NEW ADMIN</a>
+				                <a href="Add_dealer.html">NEW DEALER</a>
+				                <a href="add_client.html">NEW CLIENT</a>
+				                <a href="add_user.html">NEW USER</a>
+				            </div>
+				            <a href="#" class="submenu-toggle">DRIVER & VEHICLE</a>
+				            <div class="submenu-contentdv">
+				                <a href="">NEW DRIVER</a>
+				                <a href="">NEW VEHICLE</a>
+				            </div>
+				            <a href="#" class="submenu-toggle"> DEVICES</a>
+				            <div class="submenu-contentdevice">
+				                <a href="Add_Devices_Dealer.html">DEALER</a>
+				                <a href="Add_device_client.html">CLIENT</a>
+				            </div>
+				        </div>
+				    </li>
+			
+
+	                <li>
+	                    <a href="#" class="dropdown-toggle"><strong>TRACKING</strong></a>
+	                    <div class="dropdown-content">
+	                        <a href="demo.html">LIVE TRACKING</a>
+	                        <a href="#history">HISTORY</a>
+	                        
+	                    </div>
+	                </li>
+	                <li>
+	                    <a href="#" class="dropdown-toggle"><strong>INSTALLATION</strong></a>
+	                    <div class="dropdown-content">
+	                        <a href="createdivces.html">INSTALL</a>
+	                        <a href="#renewal">SEARCH</a>
+	                      
+	                    </div>
+	                </li>
+	                <li>
+	                    <a href="#" class="dropdown-toggle"><strong>REPORTS</strong></a>
+	                    <div class="dropdown-content">
+	                        <a href="#admin">ADMIN REPORTS</a>
+	                        <a href="#dealer">DEALER REPORTS</a>
+	                        <a href="#clients">CLIENTS REPORTS</a>
+	                        <a href="Driver_report.html">DRIVER REPORTS</a>
+	                        <a href="Vehicle_report.html">VEHICLE REPORTS</a>
+							<a href="">RENEWAL REPORTS</a>
+	                       
+	                    </div>
+	                </li>
+	                <li>
+	                    <a href="#" class="dropdown-toggle"><strong>INFORMATIONS</strong></a>
+	                    <div class="dropdown-content">
+	                        <a href="Admin_details.html">ADMIN</a>
+	                        <a href="Dealer_details.html">DEALER</a>
+	                        <a href="Client_details.html">CLIENTS</a>
+	                        <a href="User_details.html">USER</a>
+	                        <a href="Driver_details.html">DRIVER</a>
+							<a href="Driver_details.html">VEHICLE</a>
+	                       
+	                    </div>
+	                </li>
+					<li>
+					                    <a href="#" class="dropdown-toggle"><strong>RENEWAL</strong></a>
+					                    <div class="dropdown-content">
+					                       
+					                        <a href="resort.html">Renew</a>
+					                    </div>
+					                </li>
+	                <li>
+	                    <a href="#" class="dropdown-toggle"><strong>HELP & SUPPORT</strong></a>
+	                    <div class="dropdown-content">
+	                        <a href="#faq">FAQ</a>
+	                        <a href="#contact">Contact Us</a>
+	                        <a href="#guides">Guides</a>
+	                    </div>
+	                </li>
+	                <li>
+	                    <a href="#" class="dropdown-toggle"><strong>PROFILE</strong></a>
+	                    <div class="dropdown-content">
+	                        <a href="#view-profile">View Profile</a>
+	                        <a href="login.html">Logout</a>
+	                    </div>
+	                </li>
+	            </ul>
+	        </div>
+	    </div>
+		<div id="stats">
+		    <div>Total: <span id="total">0</span></div>
+		    <div>Running: <span id="running">0</span></div>
+		    <div>Offline: <span id="offline">0</span></div>
+		    <div>Parking <span id="alarm">0</span></div>
+		</div>
+
+<!-- Map Switcher -->
+<div id="mapSwitcher">
+    <div class="map-button" onclick="switchLayer('openStreetMap')" title=" OpenStreetMap">
+        <i class="fas fa-map"></i> <!-- OpenStreetMap Icon -->
+    </div>
+    <div class="map-button" onclick="switchLayer('googleSatellite')" title=" Google Satellite">
+        <i class="fas fa-globe"></i> <!-- Google Satellite Icon -->
+    </div>
+    <div class="map-button" onclick="switchLayer('googleRoadMap')" title=" Google RoadMap">
+        <i class="fas fa-road"></i> <!-- Google RoadMap Icon -->
+    </div>
+    <div class="map-button" onclick="switchLayer('googleHybrid')" title=" Google Hybrid">
+        <i class="fas fa-layer-group"></i> <!-- Google Hybrid Icon -->
+    </div>
+</div>
+
+<!-- Toggle Button -->
+<button id="toggleButton">&#9776;</button>
+
+<!-- Sidebar Section -->
+<div id="sidebar">
+    <h2>Tracker Details</h2>
+    <input type="text" id="searchBar" placeholder="Search by ID or Vehicle No" oninput="filterTable()" />
+    <table id="trackerTable">
+        <thead>
+            <tr>
+                <th>Status</th>
+                <th>Device ID</th>
+                <th>Vehicle No</th>
+                <th>Last Upload</th>
+            </tr>
+        </thead>
+        <tbody id="trackerTableBody">
+			
+			
+			
+			
+        </tbody>
+    </table>
+</div>
+
+<!-- Map Section -->
+<div id="map"></div>
+
+<script>
+    const map = L.map('map').setView([13.0779891, 77.556907], 13);
+
+    // Map Layers
+    const openStreetMap = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 18,
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    const googleSatellite = L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+        maxZoom: 18,
+        attribution: '© Google'
+    });
+
+    const googleRoadMap = L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+        maxZoom: 18,
+        attribution: '© Google'
+    });
+
+    const googleHybrid = L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+        maxZoom: 18,
+        attribution: '© Google'
+    });
+
+    let currentLayer = openStreetMap;
+
+    // Switch Map Layer
+    function switchLayer(layerName) {
+        map.removeLayer(currentLayer);
+        switch (layerName) {
+            case 'openStreetMap':
+                currentLayer = openStreetMap;
+                break;
+            case 'googleSatellite':
+                currentLayer = googleSatellite;
+                break;
+            case 'googleRoadMap':
+                currentLayer = googleRoadMap;
+                break;
+            case 'googleHybrid':
+                currentLayer = googleHybrid;
+                break;
+        }
+        map.addLayer(currentLayer);
+    }
+
+    // Sidebar Toggle
+    const toggleButton = document.getElementById('toggleButton');
+    const sidebar = document.getElementById('sidebar');
+
+    toggleButton.addEventListener('click', () => {
+        sidebar.classList.toggle('hidden');
+        toggleButton.style.right = sidebar.classList.contains('hidden') ? '10px' : '360px';
+    });
+
+    // Initialize UI (mock data for demonstration)
+    function updateUI() {
+        const total = 4;
+        const running = 2;
+        const offline = 1;
+        const alarm = 1;
+
+        document.getElementById('total').textContent = total;
+        document.getElementById('running').textContent = running;
+        document.getElementById('offline').textContent = offline;
+        document.getElementById('alarm').textContent = alarm;
+    }
+
+    updateUI();
+</script>
+
+</body>
+</html>

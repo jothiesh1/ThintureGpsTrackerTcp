@@ -19,4 +19,13 @@ public interface DealerRepository extends JpaRepository<Dealer, Long> {
 
     @Query("SELECT d FROM Dealer d WHERE d.email = :email")
     Optional<Dealer> findByEmail(@Param("email") String email);
+    List<Dealer> findByDealerNameContainingIgnoreCase(String name);
+
+    
+ // Custom query method to find a dealer by name
+    Optional<Dealer> findByDealerName(String dealerName);
+
+    // For autocomplete functionality: find dealers containing the name (case-insensitive)
+  
 }
+    

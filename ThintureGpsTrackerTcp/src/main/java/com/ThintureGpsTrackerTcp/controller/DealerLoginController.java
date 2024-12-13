@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
+
 @Controller
 public class DealerLoginController {
 
@@ -29,20 +30,24 @@ public class DealerLoginController {
     }
 
     @PostMapping("/login")
-    public String handleDealerLogin(@RequestParam("username") String username,
-                                    @RequestParam("password") String password,
-                                    Model model) {
-        logger.info("[CONTROLLER] Login attempt for username: {}", username);
+    public String handleLogin(@RequestParam("usertype") String usertype,
+                              @RequestParam("username") String username,
+                              @RequestParam("password") String password,
+                              Model model) {
+        logger.info("[CONTROLLER] Login attempt for username: {}, usertype: {}", username, usertype);
 
         try {
-            boolean isAuthenticated = dealerService.authenticateDealer(username, password);
+            // Authenticate dealer with usertype
+            boolean isAuthenticated = dealerService.authenticateDealer(username, password, usertype);
 
             if (isAuthenticated) {
-                logger.info("[CONTROLLER] Login successful for username: {}", username);
-                return "redirect:/dashboard"; // Redirect to the dashboard
+                logger.info("[CONTROLLER] Login successful for username: {}, usertype: {}", username, usertype);
+
+                // Redirect to the appropriate dashboard based on usertype
+                return "redirect:/dashboard?usertype=" + usertype;
             } else {
-                logger.warn("[CONTROLLER] Invalid username or password");
-                model.addAttribute("error", "Invalid username or password");
+                logger.warn("[CONTROLLER] Invalid username, password, or usertype");
+                model.addAttribute("error", "Invalid username, password, or user type.");
                 return "login"; // Reload login page with error
             }
         } catch (Exception e) {
@@ -53,8 +58,34 @@ public class DealerLoginController {
     }
 
     @GetMapping("/dashboard")
-    public String showDashboard() {
-        logger.info("[CONTROLLER] Rendering dashboard page");
-        return "dashboard"; // Renders dashboard.html
+    public String showDashboard(@RequestParam("usertype") String usertype, Model model) {
+        logger.info("[CONTROLLER] Rendering dashboard for usertype: {}", usertype);
+
+        // Add usertype to the model for navigation
+        model.addAttribute("usertype", usertype);
+
+        // Render different dashboards based on usertype
+        switch (usertype.toUpperCase()) {
+            case "SUPERADMIN":
+                logger.info("[CONTROLLER] Resolving template: dashboard_superadmin");
+                return "dashboard_superadmin"; // Renders dashboard_superadmin.html
+            case "ADMIN":
+                logger.info("[CONTROLLER] Resolving template: dashboard_admin");
+                return "dashboard_admin"; // Renders dashboard_admin.html
+            case "DEALER":
+                logger.info("[CONTROLLER] Resolving template: dashboard_dealer");
+                return "dashboard_dealer"; // Renders dashboard_dealer.html
+            case "CLIENT":
+                logger.info("[CONTROLLER] Resolving template: dashboard_client");
+                return "dashboard_client"; // Renders dashboard_client.html
+            case "USER":
+                logger.info("[CONTROLLER] Resolving template: dashboard_user");
+                return "dashboard_user"; // Renders dashboard_user.html
+            default:
+                logger.warn("[CONTROLLER] Invalid usertype: {}", usertype);
+                model.addAttribute("error", "Invalid user type.");
+                return "login"; // Redirect back to login for invalid usertype
+        }
     }
 }
+

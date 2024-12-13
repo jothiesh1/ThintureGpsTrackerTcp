@@ -1,65 +1,203 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org">
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
 <head>
-    <title>Dealer Login</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login Page with Validation</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            background: linear-gradient(135deg, #27ae60, #2ecc71);
-        }
+		/* Reset Styles */
+		        * {
+		            margin: 0;
+		            padding: 0;
+		            box-sizing: border-box;
+		        }
 
-        .login-container {
-            background: white;
-            color: #2c3e50;
-            padding: 30px;
-            border-radius: 15px;
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
-            width: 350px;
-            text-align: center;
-        }
+				body {
+						    background-image: url(THINTURE_IMAGE/add_new.jpg);
+						    background-size: cover;
+						    background-position: center;
+						    background-repeat: no-repeat;
+						    margin: 0; /* Remove default margin */
+						    height: 100vh; /* Full viewport height */
+						    overflow: hidden; /* Hide overflow if needed */
+						}
 
-        input[type="text"], input[type="password"] {
-            width: 100%;
-            padding: 12px;
-            margin: 10px 0;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            font-size: 1em;
-            outline: none;
-        }
+		        .login-container {
+					position: absolute;
+		           background: rgba(255, 255, 255, 0.9);
+		            color: #333;
+					left:40%;
+					top:180px;
+		            padding: 30px;
+		            border-radius: 15px;
+		            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+		            width: 100%;
+		            max-width: 400px;
+		            text-align: center;
+		        }
 
-        button {
-            background: #27ae60;
-            color: white;
-            border: none;
-            padding: 12px;
-            width: 100%;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 1em;
-        }
+		        .login-container h2 {
+		            margin-bottom: 20px;
+		            font-size: 1.8em;
+		            color: #4facfe;
+		        }
 
-        .error {
-            color: red;
-            font-size: 0.9em;
-            margin-top: 10px;
-        }
+		        input[type="text"], 
+		        input[type="password"], 
+		        select {
+		            width: 50%;
+		            padding: 12px;
+		            margin: 15px 0;
+		            border: 1px solid #ddd;
+		            border-radius: 10px;
+		            font-size: 1em;
+		            outline: none;
+		            transition: border 0.3s ease;
+		        }
+
+		        input:focus, select:focus {
+		            border-color: #4facfe;
+		        }
+
+		        input.error, select.error {
+		            border-color: red !important;
+		        }
+
+		        button {
+		            background: linear-gradient(to right, #4facfe, #00f2fe);
+		            color: white;
+		            border: none;
+		            padding: 12px;
+		            width:50%;
+		            border-radius: 10px;
+		            cursor: pointer;
+		            font-size: 1.1em;
+		            margin-top: 10px;
+		            transition: background 0.3s ease, transform 0.2s ease;
+		        }
+
+		        button:hover {
+		            background: linear-gradient(to right, #00f2fe, #4facfe);
+		            transform: scale(1.05);
+		        }
+
+		        button:active {
+		            transform: scale(1.02);
+		        }
+
+				.error-message {
+				    color: red;
+				    font-size: 0.9em;
+				    margin-top: 5px; /* Space above the error message */
+				    margin-bottom: 10px; /* Space below the error message */
+				    display: block; /* Ensures it takes up full line below the input */
+				    text-align: left; /* Aligns the text to the left within the container */
+				}
+
+		        .info-text {
+		            margin-top: 15px;
+		            font-size: 0.9em;
+		            color: #666;
+		        }
+
+		        .info-text a {
+		            color: #4facfe;
+		            text-decoration: none;
+		            font-weight: bold;
+		        }
+
+		        .info-text a:hover {
+		            text-decoration: underline;
+		        }
+				.logo img {
+										           height: 90px;
+										           width: 210px;
+										           margin-right: 10px;
+										       }
     </style>
 </head>
 <body>
     <div class="login-container">
-        <h2>Dealer Login</h2>
-        <form th:action="@{/login}" method="post">
-            <input type="text" name="username" placeholder="Username" required>
-            <input type="password" name="password" placeholder="Password" required>
+        <img th:src="@{THINTURE_IMAGE/thinture.jpg}" alt="Fleet Tracking Logo">
+        <form th:action="@{/login}" method="post" id="loginForm">
+            <select name="usertype" id="usertype">
+                <option value="" disabled selected>Select User Type</option>
+                <option value="SUPERADMIN">Superadmin</option>
+                <option value="ADMIN">Admin</option>
+                <option value="DEALER">Dealer</option>
+                <option value="CLIENT">Client</option>
+                <option value="USER">User</option>
+            </select>
+            <span class="error-message" id="usertypeError"></span>
+            <input type="text" id="username" name="username" placeholder="Enter Username">
+            <span class="error-message" id="usernameError"></span>
+            <input type="password" id="password" name="password" placeholder="Enter Password">
+            <span class="error-message" id="passwordError"></span>
             <button type="submit">Login</button>
         </form>
-        <p class="error" th:if="${error}" th:text="${error}"></p>
+        <p class="info-text"> <a href="/register">Forgot Password?</a></p>
+		<!-- Display error messages -->
+		   <p th:if="${error}" th:text="${error}" class="error-message"></p>
     </div>
+
+	<script>
+	    const form = document.getElementById("loginForm");
+	    const usertype = document.getElementById("usertype");
+	    const username = document.getElementById("username");
+	    const password = document.getElementById("password");
+	    const usertypeError = document.getElementById("usertypeError");
+	    const usernameError = document.getElementById("usernameError");
+	    const passwordError = document.getElementById("passwordError");
+
+	    form.addEventListener("submit", (e) => {
+	        e.preventDefault(); // Prevent default form submission
+
+	        let valid = true;
+
+	        // Reset error messages
+	        resetErrors();
+
+	        // Validate user type
+	        if (usertype.value === "") {
+	            valid = false;
+	            usertype.classList.add("error");
+	            usertypeError.textContent = "Please select a user type.";
+	        } else if (usertype.value !== "DEALER") {
+	            valid = false;
+	            usertype.classList.add("error");
+	            usertypeError.textContent = "Only DEALER user type is allowed to log in.";
+	        }
+
+	        // Validate username
+	        if (username.value.trim() === "") {
+	            valid = false;
+	            username.classList.add("error");
+	            usernameError.textContent = "Username is required.";
+	        }
+
+	        // Validate password
+	        if (password.value.trim() === "") {
+	            valid = false;
+	            password.classList.add("error");
+	            passwordError.textContent = "Password is required.";
+	        }
+
+	        // If the form is valid, submit it
+	        if (valid) {
+	            form.submit();
+	        }
+	    });
+
+	    function resetErrors() {
+	        // Remove error styles and messages
+	        usertype.classList.remove("error");
+	        username.classList.remove("error");
+	        password.classList.remove("error");
+	        usertypeError.textContent = "";
+	        usernameError.textContent = "";
+	        passwordError.textContent = "";
+	    }
+	</script>
+
 </body>
 </html>

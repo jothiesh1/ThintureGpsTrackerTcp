@@ -57,7 +57,7 @@ public class GPSWebSocketHandler extends TextWebSocketHandler {
         locationData.put("longitude", longitude);
         locationData.put("timestamp", timestamp);
         locationData.put("speed", speed);
-        locationData.put("ignition", isIgnitionOn);
+       // locationData.put("ignition", isIgnitionOn);
         locationData.put("ignitionState", ignitionState);
 
         TextMessage locationMessage = new TextMessage(locationData.toString());

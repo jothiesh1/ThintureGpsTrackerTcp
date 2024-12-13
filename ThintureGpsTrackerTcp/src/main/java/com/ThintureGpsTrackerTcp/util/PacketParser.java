@@ -14,6 +14,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import io.reactivex.rxjava3.core.Observable;
 import io.reactivex.rxjava3.core.Single;
@@ -27,7 +28,9 @@ import org.springframework.stereotype.Component;
 
 import com.ThintureGpsTrackerTcp.handler.GPSWebSocketHandler;
 import com.ThintureGpsTrackerTcp.model.DeviceHistory;
+import com.ThintureGpsTrackerTcp.model.LastKnownLocationHttps;
 import com.ThintureGpsTrackerTcp.repository.DeviceHistoryRepository;
+import com.ThintureGpsTrackerTcp.repository.LastKnownLocationHttpsRepository;
 import com.ThintureGpsTrackerTcp.service.DeviceHistoryService;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -40,6 +43,8 @@ public class PacketParser {
 	private final GPSWebSocketHandler gpsWebSocketHandler;
 	 private final DeviceHistoryRepository deviceHistoryRepository;
 
+	    @Autowired
+	    private LastKnownLocationHttpsRepository lastKnownLocationHttpsRepository;
 	    @Autowired
 	    private DeviceHistoryService deviceHistoryService;
 	 @Autowired
@@ -254,8 +259,9 @@ public class PacketParser {
 	private void saveToDatabase(String deviceID, Double latitude, Double longitude, Long timestamp, Integer speed, String ignitionState) {
 	    try {
 	        logger.debug("Preparing to save data: DeviceID: {}, Latitude: {}, Longitude: {}, Timestamp (Epoch): {}, Speed: {}, IgnitionState: {}",
-	            deviceID, latitude, longitude, timestamp, speed, ignitionState);
+	                deviceID, latitude, longitude, timestamp, speed, ignitionState);
 
+	        // Validate required fields
 	        if (deviceID == null || latitude == null || longitude == null || timestamp == null) {
 	            logger.warn("Missing required fields for saving: DeviceID: {}, Timestamp: {}", deviceID, timestamp);
 	            return;
@@ -270,14 +276,46 @@ public class PacketParser {
 
 	        // Convert to Asia/Kolkata time zone
 	        ZonedDateTime kolkataDateTime = utcDateTime.withZoneSameInstant(ZoneId.of("Asia/Kolkata"));
-	        logger.debug("Converted UTC timestamp to Asia/Kolkata LocalDateTime: {}", kolkataDateTime);
+	        LocalDateTime localDateTime = kolkataDateTime.toLocalDateTime();
+	        logger.debug("Converted UTC timestamp to Asia/Kolkata LocalDateTime: {}", localDateTime);
 
-	        // Create DeviceHistory object and set properties
+	        // Handle Ignition State: "OFF"
+	        if ("OFF".equalsIgnoreCase(ignitionState)) {
+	            logger.info("Device {}: Ignition is OFF. Updating last known location in last_known_location_https table.", deviceID);
+
+	            try {
+	                // Check if an existing record exists in the last_known_location_https table
+	                Optional<LastKnownLocationHttps> existingLocationOpt = lastKnownLocationHttpsRepository.findByDeviceId(deviceID);
+	                LastKnownLocationHttps location;
+
+	                if (existingLocationOpt.isPresent()) {
+	                    location = existingLocationOpt.get();
+	                    logger.info("Existing record found for DeviceID: {}. Updating last known location.", deviceID);
+	                } else {
+	                    location = new LastKnownLocationHttps();
+	                    location.setDeviceId(deviceID);
+	                    logger.info("No existing record found for DeviceID: {}. Creating a new entry in last_known_location_https.", deviceID);
+	                }
+
+	                // Update the location details
+	                location.setLatitude(latitude);
+	                location.setLongitude(longitude);
+	                location.setLastUpdated(localDateTime);
+
+	                // Save the record
+	                lastKnownLocationHttpsRepository.save(location);
+	                logger.info("Last known location updated/inserted successfully for DeviceID: {}", deviceID);
+	            } catch (Exception e) {
+	                logger.error("Error updating last known location for DeviceID {}: {}", deviceID, e.getMessage(), e);
+	            }
+	        }
+
+	        // Save to DeviceHistory regardless of the ignition state
 	        DeviceHistory history = new DeviceHistory();
 	        history.setDeviceId(deviceID);
 	        history.setLatitude(latitude);
 	        history.setLongitude(longitude);
-	        history.setTimestamp(kolkataDateTime.toLocalDateTime());  // Store as LocalDateTime
+	        history.setTimestamp(localDateTime); // Store as LocalDateTime
 	        history.setSpeed(speed);
 	        history.setIgnitionState(ignitionState);
 
@@ -286,12 +324,11 @@ public class PacketParser {
 
 	        // Save to database
 	        deviceHistoryService.saveDeviceHistory(history); // Delegating to service
-	        logger.info("DeviceHistory saved successfully: {}", history);
+	        logger.info("DeviceHistory saved successfully for DeviceID: {}", history.getDeviceId());
 	    } catch (Exception e) {
-	        logger.error("Error saving to database: {}", e.getMessage(), e);
+	        logger.error("Error saving to database for DeviceID {}: {}", deviceID, e.getMessage(), e);
 	    }
 	}
-
 
 
 
